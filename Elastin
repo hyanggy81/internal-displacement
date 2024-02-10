@@ -1,0 +1,110 @@
+# Load required libraries
+library(openxlsx)
+library(caret)
+library(glmnet)
+
+# Read data
+data <- read.xlsx("final_data.xlsx")
+
+# Define independent variables and dependent variable
+independent_vars <- c("GDPpc", "conflict", "disasters", "urbanization", "vulnerability", "HDI")
+dependent_var <- "IDPs"
+
+# Remove rows with NAs introduced by lagging
+data <- na.omit(data)
+
+# Apply Log Transformation to Independent Variables
+data[, independent_vars] <- log1p(data[, independent_vars])
+
+# Apply Log Transformation to Dependent Variable
+data[[dependent_var]] <- log1p(data[[dependent_var]])
+
+# Add lag1 to independent variables
+data$GDPpc_lag1 <- lag(data$GDPpc, 1)
+data$conflict_lag1 <- lag(data$conflict, 1)
+data$disasters_lag1 <- lag(data$disasters, 1)
+data$urbanization_lag1 <- lag(data$urbanization, 1)
+data$vulnerability_lag1 <- lag(data$vulnerability, 1)
+data$HDI_lag1 <- lag(data$HDI, 1)
+
+# Define the control using cross-validation
+control <- trainControl("cv", number = 10)
+
+# Create Time Slices for Data Splitting
+time_series_length <- nrow(data)
+initial_window <- round(time_series_length * 0.8)
+horizon <- time_series_length - initial_window
+slices <- createTimeSlices(1:time_series_length, initialWindow = initial_window, horizon = horizon, fixedWindow = TRUE)
+trainSlices <- slices$train
+testSlices <- slices$test
+
+# Initialize Data Frame for Model Performance
+model_performances <- data.frame()
+
+# Loop Through Each Time Slice
+for (i in 1:length(trainSlices)) {
+  # Data for this slice
+  train_indices <- unlist(trainSlices[i])
+  test_indices <- unlist(testSlices[i])
+  
+  # Prepare data
+  X_train <- as.matrix(data[train_indices, independent_vars, drop = FALSE])
+  Y_train <- data[train_indices, dependent_var]
+  X_test <- as.matrix(data[test_indices, independent_vars, drop = FALSE])
+  Y_test <- data[test_indices, dependent_var]
+  
+  # Train the model using Elastic Net
+  lambda_values <- seq(0, 1, 0.01)
+  cv_model <- cv.glmnet(X_train, Y_train, type.measure = "mse", alpha = 0.5, family = "gaussian", lambda = lambda_values, control = control)
+  
+  # Select Optimal Lambda
+  optimal_lambda <- cv_model$lambda.min
+  
+  # Predict on the testing set
+  predictions <- predict(cv_model, newx = X_test, s = optimal_lambda)
+  
+  # Evaluate the model performance
+  rmse <- sqrt(mean((predictions - Y_test)^2))
+  rsquared <- 1 - sum((Y_test - predictions)^2) / sum((Y_test - mean(Y_test))^2)
+  mae <- mean(abs(predictions - Y_test))
+  
+  # Store Performance
+  model_performances <- rbind(model_performances, data.frame(Slice = i, RMSE = rmse, Rsquared = rsquared, MAE = mae))
+}
+
+# Output the results
+print(model_performances)
+
+
+# Extract the coefficients at the optimal value of lambda
+optimal_coefs <- coef(cv_model, s = "lambda.min")
+
+# Convert the sparse matrix into a regular numeric vector, excluding the intercept
+# The intercept is the first element in the matrix and can be excluded with [-1]
+coef_vector <- as.numeric(optimal_coefs[-1])
+
+# Get the names of the coefficients (variables)
+coef_names <- rownames(optimal_coefs)[-1]
+
+# Create a data frame from the vectors
+coef_df <- data.frame(Variable = coef_names, Coefficient = coef_vector)
+
+# Remove zero coefficients if you only want to plot non-zero coefficients
+coef_df <- coef_df[coef_df$Coefficient != 0, ]
+
+# Order the data frame by the absolute value of the coefficients for plotting
+coef_df <- coef_df[order(abs(coef_df$Coefficient), decreasing = TRUE), ]
+
+# Plot the variable importance using ggplot2
+library(ggplot2)
+ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # Flip coordinates to make the plot horizontal
+  theme_minimal() +
+  labs(title = "Variable Importance in Elastic Net Model",
+       x = "Coefficient Value",
+       y = "Variables")
+
+
+
+
