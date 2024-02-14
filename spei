@@ -1,5 +1,3 @@
-# Download the data from https://spei.csic.es/spei_database/#map_name=spei01#map_position=1463
-
 #library(pacman)
 pacman::p_load(foreign, data.table, raster, ncdf4, # load data
                dplyr, tidyr, readr, broom, tidyverse, zoo,  # clean data
@@ -69,60 +67,54 @@ write.csv(temp, "spei.df.csv", row.names = F)
 
 
 
+# # Selec year
+ spei.df = fread("spei.df.csv") 
+# 
+ # format date and select year
+ spei.df <- spei.df %>%
+   mutate(date = as.Date(spei.date)) %>%
+   mutate(month = format(date, "%m"), year = format(date, "%Y"))
+ 
+ spei.df <- spei.df %>% dplyr::select(-spei.date) %>% filter(year >= 2009)
+ 
+# 
+ write.csv(spei.df, "spei.df.test.csv", row.names = F)
 
-library(data.table)
-library(dplyr)
-library(countrycode)
+ spei.df = fread("spei.df.test.csv")
+# 
+# # spei.mean
+ spei.mean = spei.df %>% group_by(iso3c, year) %>%
+   dplyr::summarise(spei = mean(spei, na.rm = T))
+ 
+# # spei.risk
+ spei.df = spei.df %>% 
+   mutate(spei.cat = ifelse(spei < - 2, "Severe.Dry", 
+                                   ifelse(spei > 2 , "Severe.Wet", "Normal")))
+ 
+ events = spei.df  %>% mutate(value = 1) %>%
+   group_by(iso3c, year, spei.cat) %>% 
+   dplyr::summarise(events = sum(value, na.rm = T))
+   
+ grid.months = spei.df %>% dplyr::select(iso3c, year) %>%   
+   mutate(grid.months = 1) %>%
+   group_by(iso3c, year) %>% 
+   dplyr::summarise(grid.months = sum(grid.months))
+# 
+ spei.risk = left_join(events, grid.months) %>% 
+   mutate(spei.risk = events/grid.months) %>% 
+   dplyr::select(-events, -grid.months) %>% 
+   spread(., spei.cat, spei.risk)
+# 
+ spei.summary = inner_join(spei.mean, spei.risk)
+# 
+ write.csv(spei.summary, "spei.summary.csv", row.names = F)
 
-# Assuming spei.df has been read from "spei.df.csv"
-spei.df <- fread("spei.df.csv")
+# load data
+spei.df = fread("spei.summary.csv")
+spei.df = spei.df %>% replace(is.na(.), 0)
 
-# Convert 'spei.date' column to Date class, specifying the format if necessary
-spei.df <- spei.df %>%
-  mutate(spei.date = as.Date(spei.date, format = "%Y-%m-%d")) %>%
-  mutate(month = format(spei.date, "%m"), year = format(spei.date, "%Y"))
-
-# Proceed with subsequent analysis, now using the correct 'spei.date' column
-
-# Group by ISO3 and year, then calculate annual mean SPEI
-spei.mean <- spei.df %>%
-  group_by(iso3c, year) %>%
-  summarise(spei = mean(spei, na.rm = TRUE), .groups = "drop")
-
-# Categorize SPEI for risk assessment
-spei.df <- spei.df %>%
-  mutate(spei.cat = case_when(
-    spei < -2 ~ "Severe.Dry",
-    spei > 2 ~ "Severe.Wet",
-    TRUE ~ "Normal"
-  ))
-
-# Calculate events
-events <- spei.df %>%
-  group_by(iso3c, year, spei.cat) %>%
-  summarise(events = n(), .groups = "drop")
-
-# Calculate grid.months
-grid.months <- spei.df %>%
-  group_by(iso3c, year) %>%
-  summarise(grid.months = n_distinct(month), .groups = "drop")
-
-# Calculate SPEI risk
-spei.risk <- left_join(events, grid.months, by = c("iso3c", "year")) %>%
-  mutate(spei.risk = events / grid.months) %>%
-  select(-events, -grid.months) %>%
-  spread(key = spei.cat, value = spei.risk)
-
-# Join mean SPEI with risk assessment
-spei.summary <- inner_join(spei.mean, spei.risk, by = c("iso3c", "year"))
-
-# Replace NA values with 0
-spei.summary[is.na(spei.summary)] <- 0
-
-# Ensure year and ISO3c combination is unique
-spei.summary <- spei.summary %>%
-  distinct(iso3c, year, .keep_all = TRUE)
-
-# Write the final summary to CSV
-write.csv(spei.summary, "spei.summary.csv", row.names = FALSE)
+#check id Year unique
+unique(table(spei.df$iso3c, spei.df$year))
+any(table(spei.df$iso3c, spei.df$year) != 1)
+spei.df = spei.df %>% distinct(iso3c, year, .keep_all = T)
 
