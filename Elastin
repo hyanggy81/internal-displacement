@@ -1,17 +1,22 @@
-# Load required libraries
+
 library(openxlsx)
 library(caret)
 library(glmnet)
+library(ggplot2)
+library(dplyr)
+
+ 
+setwd("/Users/jiyoung/Desktop/M_thesis/Data/Final_Data")
 
 # Read data
-data <- read.xlsx("final_data.xlsx")
+data <- read.xlsx("master_2009_2021_withoutNa1.xlsx")
+
+data <- data %>% arrange(iso3, year) 
 
 # Define independent variables and dependent variable
 independent_vars <- c("GDPpc", "conflict", "disasters", "urbanization", "vulnerability", "HDI")
 dependent_var <- "IDPs"
 
-# Remove rows with NAs introduced by lagging
-data <- na.omit(data)
 
 # Apply Log Transformation to Independent Variables
 data[, independent_vars] <- log1p(data[, independent_vars])
@@ -19,43 +24,184 @@ data[, independent_vars] <- log1p(data[, independent_vars])
 # Apply Log Transformation to Dependent Variable
 data[[dependent_var]] <- log1p(data[[dependent_var]])
 
-# Add lag1 to independent variables
-data$GDPpc_lag1 <- lag(data$GDPpc, 1)
-data$conflict_lag1 <- lag(data$conflict, 1)
-data$disasters_lag1 <- lag(data$disasters, 1)
-data$urbanization_lag1 <- lag(data$urbanization, 1)
-data$vulnerability_lag1 <- lag(data$vulnerability, 1)
-data$HDI_lag1 <- lag(data$HDI, 1)
+# Apply lag
 
-# Define the control using cross-validation
-control <- trainControl("cv", number = 10)
+data <- data %>%
+  arrange(iso3, year) %>%  
+  group_by(iso3) %>%
+  mutate(
+    GDPpc_lag1 = lag(GDPpc, 1),
+    conflict_lag1 = lag(conflict, 1),
+    disasters_lag1 = lag(disasters, 1),
+    urbanization_lag1 = lag(urbanization, 1),
+    vulnerability_lag1 = lag(vulnerability, 1),
+    HDI_lag1 = lag(HDI, 1)
+  ) %>%
+  ungroup()  
 
-# Create Time Slices for Data Splitting
-time_series_length <- nrow(data)
-initial_window <- round(time_series_length * 0.8)
-horizon <- time_series_length - initial_window
-slices <- createTimeSlices(1:time_series_length, initialWindow = initial_window, horizon = horizon, fixedWindow = TRUE)
-trainSlices <- slices$train
-testSlices <- slices$test
 
-# Initialize Data Frame for Model Performance
-model_performances <- data.frame()
+# Assuming 'data' already has lagged variables created and log transformations applied
 
-# Loop Through Each Time Slice
-for (i in 1:length(trainSlices)) {
-  # Data for this slice
-  train_indices <- unlist(trainSlices[i])
-  test_indices <- unlist(testSlices[i])
+# Combine independent and dependent variables to specify which columns to check for NAs
+variables_to_check <- c(independent_vars, "IDPs", paste0(independent_vars, "_lag1"))
+
+# Omit rows where any of the specified variables are NA
+data <- data %>%
+  filter(!if_any(all_of(variables_to_check), is.na))
+
+
+
+
+
+################################## cross-validation
+
+# dataset for 'train.df'
+train.df <- data
+
+
+# Adjusted parameters to fit within the dataset's span
+train.window <- 8 
+test.horizon <- 3  
+
+# Assuming total.period 
+total.period <- sort(unique(train.df$year))  
+
+
+# Defining the years explicitly
+years <- 2009:2021
+initialWindow <- 8
+horizon <- 3
+num_slices <- length(years) - initialWindow - horizon + 1
+
+# Initialize lists to store the training and testing years for each slice
+training_slices <- list()
+testing_slices <- list()
+
+# Generate the slices
+for (i in 1:num_slices) {
+  training_slices[[i]] <- years[i:(i + initialWindow - 1)]
+  testing_slices[[i]] <- years[(i + initialWindow):(i + initialWindow + horizon - 1)]
+}
+
+# Conceptual model training and evaluation
+# Placeholder function for training a model
+trainModel <- function(train_data) {
+  # Placeholder for model training logic
+  # model <- someModelTrainingFunction(train_data)
+  # return(model)
+}
+
+# Placeholder function for model evaluation
+evaluateModel <- function(model, test_data) {
+  # Placeholder for model evaluation logic
+  # predictions <- predict(model, newdata = test_data)
+  # performanceMetric <- someEvaluationFunction(predictions, test_data$actual)
+  # return(performanceMetric)
+}
+
+# Loop through each slice, train and test models
+results <- list()
+for (i in 1:length(training_slices)) {
+  # Filter train and test sets for the current slice
+  train_data <- filter(train.df, year %in% training_slices[[i]])
+  test_data <- filter(train.df, year %in% testing_slices[[i]])
   
-  # Prepare data
-  X_train <- as.matrix(data[train_indices, independent_vars, drop = FALSE])
-  Y_train <- data[train_indices, dependent_var]
-  X_test <- as.matrix(data[test_indices, independent_vars, drop = FALSE])
-  Y_test <- data[test_indices, dependent_var]
+  # Train the model on the current training slice
+  model <- trainModel(train_data)
+  
+  # Evaluate the model on the current testing slice
+  performanceMetric <- evaluateModel(model, test_data)
+  
+  # Store the evaluation metric for the current slice
+  results[[i]] <- performanceMetric
+}
+
+
+## Visualization for cross-validation
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+
+years <- 2009:2021  # Defining the years explicitly
+initialWindow <- 8
+horizon <- 3
+num_slices <- length(years) - initialWindow - horizon + 1
+
+training_slices <- list()
+testing_slices <- list()
+
+# Generate the slices
+for (i in 1:num_slices) {
+  training_slices[[i]] <- years[i:(i + initialWindow - 1)]
+  testing_slices[[i]] <- years[(i + initialWindow):(i + initialWindow + horizon - 1)]
+}
+
+# Prepare a dataframe for plotting
+plot.df <- lapply(seq_along(training_slices), function(i) {
+  train_df <- tibble(
+    year = training_slices[[i]],
+    spl.id = rep(i, length(training_slices[[i]])),
+    spl.set = "Training"
+  )
+  
+  test_df <- tibble(
+    year = testing_slices[[i]],
+    spl.id = rep(i, length(testing_slices[[i]])),
+    spl.set = "Validation"
+  )
+  
+  bind_rows(train_df, test_df)
+}) %>%
+  bind_rows() %>%
+  mutate(year = as.factor(year))  # Ensure 'year' is treated as a factor for plotting
+
+# Plotting the cross-validation scheme using ggplot2
+ggplot(plot.df, aes(x = spl.id, y = year, fill = spl.set)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_d() +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  coord_flip() +
+  xlab("Resample ID") + ylab("Year")
+
+# Save the plot
+ggsave("rollWindowScheme.jpeg", width = 10, height = 6)
+
+
+
+
+
+
+################################################. model performance 
+
+library(glmnet)
+library(ggplot2)
+
+# Initialize a dataframe to store model performance metrics
+model_performances <- data.frame(Slice = integer(), RMSE = numeric(), Rsquared = numeric(), MAE = numeric())
+
+# Loop through each slice for cross-validation
+for (i in 1:length(training_slices)) {
+  # Filter train and test sets for the current slice
+  train_data <- filter(train.df, year %in% training_slices[[i]])
+  test_data <- filter(train.df, year %in% testing_slices[[i]])
+  
+  # Check if Y_train has more than one unique value
+  if(length(unique(train_data[[dependent_var]])) <= 1) {
+    cat("Slice", i, "skipped: Dependent variable is constant.\n")
+    next  # Skip to the next iteration of the loop
+  }
+  
+  # Prepare data for Elastic Net
+  X_train <- as.matrix(train_data[, independent_vars])
+  Y_train <- train_data[[dependent_var]]
+  X_test <- as.matrix(test_data[, independent_vars])
+  Y_test <- test_data[[dependent_var]]
   
   # Train the model using Elastic Net
   lambda_values <- seq(0, 1, 0.01)
-  cv_model <- cv.glmnet(X_train, Y_train, type.measure = "mse", alpha = 0.5, family = "gaussian", lambda = lambda_values, control = control)
+  cv_model <- cv.glmnet(X_train, Y_train, type.measure = "mse", alpha = 0.5, family = "gaussian", lambda = lambda_values)
   
   # Select Optimal Lambda
   optimal_lambda <- cv_model$lambda.min
@@ -68,19 +214,22 @@ for (i in 1:length(trainSlices)) {
   rsquared <- 1 - sum((Y_test - predictions)^2) / sum((Y_test - mean(Y_test))^2)
   mae <- mean(abs(predictions - Y_test))
   
-  # Store Performance
+  # Store Performance for each slice
   model_performances <- rbind(model_performances, data.frame(Slice = i, RMSE = rmse, Rsquared = rsquared, MAE = mae))
 }
+
 
 # Output the results
 print(model_performances)
 
+# Assuming you want to analyze the model from the best performing slice
+# Here, just selecting the first model as an example, replace with selection logic as needed
+cv_model <- cv.glmnet(as.matrix(train.df[, independent_vars]), train.df[[dependent_var]], type.measure = "mse", alpha = 0.5, family = "gaussian", lambda = seq(0, 1, 0.01))
 
 # Extract the coefficients at the optimal value of lambda
 optimal_coefs <- coef(cv_model, s = "lambda.min")
 
 # Convert the sparse matrix into a regular numeric vector, excluding the intercept
-# The intercept is the first element in the matrix and can be excluded with [-1]
 coef_vector <- as.numeric(optimal_coefs[-1])
 
 # Get the names of the coefficients (variables)
@@ -96,14 +245,11 @@ coef_df <- coef_df[coef_df$Coefficient != 0, ]
 coef_df <- coef_df[order(abs(coef_df$Coefficient), decreasing = TRUE), ]
 
 # Plot the variable importance using ggplot2
-library(ggplot2)
 ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   geom_bar(stat = "identity") +
   coord_flip() +  # Flip coordinates to make the plot horizontal
   theme_minimal() +
-  labs(title = "Variable Importance in Elastic Net Model",
-       x = "Coefficient Value",
-       y = "Variables")
+  labs(title = "Variable Importance in Elastic Net Model", x = "Coefficient Value", y = "Variables")
 
 
 
