@@ -14,8 +14,8 @@ data <- read.xlsx("master_2009_2021_withoutNa1.xlsx")
 data <- data %>% arrange(iso3, year) 
 
 # Define independent variables and dependent variable
-independent_vars <- c("GDPpc", "conflict", "disasters", "urbanization", "vulnerability", "HDI")
-dependent_var <- "IDPs"
+independent_vars <- c("GDPpc", "conflict_Norm", "disasters_Norm", "urbanization", "vulnerability", "HDI")
+dependent_var <- "ID_Norm"
 
 
 # Apply Log Transformation to Independent Variables
@@ -24,31 +24,26 @@ data[, independent_vars] <- log1p(data[, independent_vars])
 # Apply Log Transformation to Dependent Variable
 data[[dependent_var]] <- log1p(data[[dependent_var]])
 
-# Apply lag
-
+# Apply lag to the correctly named variables
 data <- data %>%
   arrange(iso3, year) %>%  
   group_by(iso3) %>%
   mutate(
     GDPpc_lag1 = lag(GDPpc, 1),
-    conflict_lag1 = lag(conflict, 1),
-    disasters_lag1 = lag(disasters, 1),
+    conflict_Norm_lag1 = lag(conflict_Norm, 1),
+    disasters_Norm_lag1 = lag(disasters_Norm, 1),
     urbanization_lag1 = lag(urbanization, 1),
     vulnerability_lag1 = lag(vulnerability, 1),
     HDI_lag1 = lag(HDI, 1)
   ) %>%
-  ungroup()  
+  ungroup()
 
-
-# Assuming 'data' already has lagged variables created and log transformations applied
-
-# Combine independent and dependent variables to specify which columns to check for NAs
-variables_to_check <- c(independent_vars, "IDPs", paste0(independent_vars, "_lag1"))
+# Now we use the correct names for lagged variables
+variables_to_check <- c(independent_vars, dependent_var, paste0(independent_vars, "_lag1"))
 
 # Omit rows where any of the specified variables are NA
 data <- data %>%
   filter(!if_any(all_of(variables_to_check), is.na))
-
 
 
 
@@ -154,7 +149,7 @@ plot.df <- lapply(seq_along(training_slices), function(i) {
   bind_rows(train_df, test_df)
 }) %>%
   bind_rows() %>%
-  mutate(year = as.factor(year))  # Ensure 'year' is treated as a factor for plotting
+  mutate(year = as.factor(year))  
 
 # Plotting the cross-validation scheme using ggplot2
 ggplot(plot.df, aes(x = spl.id, y = year, fill = spl.set)) +
@@ -170,10 +165,7 @@ ggsave("rollWindowScheme.jpeg", width = 10, height = 6)
 
 
 
-
-
-
-################################################. model performance 
+################################################ model performance 
 
 library(glmnet)
 library(ggplot2)
@@ -252,5 +244,38 @@ ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   labs(title = "Variable Importance in Elastic Net Model", x = "Coefficient Value", y = "Variables")
 
 
+
+
+
+
+####################### prediction test
+
+# Predict on the testing set using the optimal lambda
+predictions <- predict(cv_model, newx = X_test, s = optimal_lambda)
+
+
+# Convert predictions 
+predictions <- as.vector(predictions)
+
+rmse_test <- sqrt(mean((predictions - Y_test)^2))
+rsquared_test <- 1 - sum((Y_test - predictions)^2) / sum((Y_test - mean(Y_test))^2)
+mae_test <- mean(abs(predictions - Y_test))
+
+# Printing the evaluation metrics
+cat("RMSE on Test Set:", rmse_test, "\n")
+cat("R-squared on Test Set:", rsquared_test, "\n")
+cat("MAE on Test Set:", mae_test, "\n")
+
+# Assuming 'predictions' and 'Y_test' are available from the previous step
+data_for_plot <- data.frame(Actual = Y_test, Predicted = predictions)
+
+ggplot(data_for_plot, aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.5) +  # Plot actual vs. predicted values
+  geom_abline(color = "red", linetype = "dashed") +  # Line for perfect predictions
+  labs(title = "Actual vs. Predicted Values", x = "Actual Values", y = "Predicted Values") +
+  theme_minimal()
+
+# Save the plot
+ggsave("Actual_vs_Predicted.jpeg", width = 8, height = 6)
 
 
