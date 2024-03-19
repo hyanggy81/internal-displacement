@@ -1,6 +1,9 @@
 #library(pacman)
-pacman::p_load(foreign, data.table, raster, ncdf4, # load data
-               dplyr, tidyr, readr, broom, tidyverse, zoo,  # clean data
+pacman::p_load(foreign, data.table, raster, ncdf4, 
+
+# load data
+               dplyr, tidyr, readr, broom, tidyverse, zoo,  
+# clean data
                ggmap, geosphere, countrycode, maps, sf, rgeos, rworldmap, geonames # geo data
 )
 
