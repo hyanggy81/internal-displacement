@@ -108,16 +108,15 @@ independent_vars <- c(
 )
 
 
-
+#dependent variables
 dependent_var1 <- "ID_conflict_log"
 dependent_var2 <- "ID_disasters_log"
-dependent_var3 <- "IDPs_conflict_log"
-dependent_var4 <- "IDPs_disasters_log"
+
 
 
 # Omit rows where any of the specified variables are NA
 # Define the variables to check (independent and dependent variables)
-variables_to_check <- c(independent_vars, "ID_conflict_log", "ID_disasters_log", "IDPs_conflict_log","IDPs_disasters_log" )
+variables_to_check <- c(independent_vars, "ID_conflict_log", "ID_disasters_log" )
 
 # Omit rows where any of the specified variables are NA
 data <- data %>%
