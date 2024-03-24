@@ -30,9 +30,10 @@ data <- data %>%
     EconomicInequality_std = standardize(EconomicInequality),
     PublicServices_std = standardize(PublicServices),
     HumanRights_std = standardize(HumanRights),
-    DemographicPressures_std = standardize(DemographicPressures),
     ExpectedSchooling_std =  standardize(ExpectedSchooling),  
-    LifeExpectancy_std = standardize(LifeExpectancy)
+    LifeExpectancy_std = standardize(LifeExpectancy),
+    AgeDependency_std = standardize(AgeDependency),
+    HumanRights_std = standardize(HumanRights)
   )
 
 # Negative variables 
@@ -85,7 +86,7 @@ data <- data %>%
 
 # Define lagged independent variables
 lagged_vars <- c(
-  "HDI_std",
+
   "GDPpc_std",
   "Urbanization_std",
   "Vulnerability_std",
@@ -94,7 +95,10 @@ lagged_vars <- c(
   "PoliticalStability_log",
   "SPEI_log",
   "Conflict_std",
-  "Disasters_std"
+  "Disasters_std",
+  "AgeDependency_std",
+  "HumanRights_std"
+  
 )
 
 # Apply lag1 to independent variables
@@ -105,15 +109,16 @@ for (var in lagged_vars) {
 # Filter out NA rows resulting from applying lag
 data <- data[complete.cases(data), ]
 
-# Define dependent variables
-dependent_vars <- c(
-  "ID_conflict_log",
-  "ID_disasters_log",
-  "IDPs_conflict_log",
-  "IDPs_disasters_log",
-  "ID_log",
-  "IDPs_log"
-)
+
+
+#dependent variables
+dependent_var1 <- "ID_conflict_log"
+dependent_var2 <- "ID_disasters_log"
+dependent_var3 <- "IDPs_conflict_log"
+dependent_var4 <- "IDPs_disasters_log"
+dependent_var5 <- "ID_log"
+dependent_var6 <- "IDPs_log"
+
 
 # Define years explicitly
 years <- 2009:2021  
