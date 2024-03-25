@@ -1,6 +1,5 @@
 
 
-
 # Load required libraries
 library(openxlsx)
 library(caret)
@@ -81,7 +80,8 @@ data <- data %>%
     IDPs_conflict_log = log(IDPs_conflict + 1),
     IDPs_disasters_log = log(IDPs_disasters + 1),
     ID_log = log(ID + 1),
-    IDPs_log = log(IDPs + 1)
+    IDPs_log = log(IDPs + 1),
+    refugee_log = log(refugee + 1)
   )
 
 # Define lagged independent variables
@@ -118,6 +118,7 @@ dependent_var3 <- "IDPs_conflict_log"
 dependent_var4 <- "IDPs_disasters_log"
 dependent_var5 <- "ID_log"
 dependent_var6 <- "IDPs_log"
+dependent_var7 <- "refugee_log"
 
 
 # Define years explicitly
@@ -181,16 +182,16 @@ for (i in 1:length(training_slices)) {
     filter(year %in% testing_slices[[i]])
   
   # Check if Y_train has more than one unique value
-  if (length(unique(train_data[[dependent_var1]])) <= 1) {
+  if (length(unique(train_data[[dependent_var2]])) <= 1) {
     cat("Slice", i, "skipped: Dependent variable is constant.\n")
     next  # Skip to the next iteration of the loop
   }
   
   # Prepare data for Elastic Net
   X_train <- as.matrix(train_data[, lagged_vars])
-  Y_train <- train_data[[dependent_var1]]
+  Y_train <- train_data[[dependent_var2]]
   X_test <- as.matrix(test_data[, lagged_vars])
-  Y_test <- test_data[[dependent_var1]]
+  Y_test <- test_data[[dependent_var2]]
   
   # Train the model using Elastic Net
   lambda_values <- seq(0, 1, 0.01)
@@ -239,7 +240,7 @@ ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   geom_bar(stat = "identity") +
   coord_flip() +  # Flip coordinates to make the plot horizontal
   theme_minimal() +
-  labs(title = "Variable Importance", x = "Variables", y = "Coefficient Value")
+  labs(title = " Important Drivers of Disasters-induced internal displacement", x = "Variables", y = "Coefficient Value")
 
 
 
