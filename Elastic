@@ -85,7 +85,7 @@ results <- list()
 
 folds <- 4
 test.horizon <- 1
-alpha <- 0
+alpha <- 0.5
 lambda <- c(0, 1, 0.01)
 
 # Iterate over each group (iso3) 
