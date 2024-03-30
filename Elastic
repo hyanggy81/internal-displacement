@@ -1,79 +1,50 @@
 
-
-# Load required libraries
-library(openxlsx)
 library(caret)
 library(glmnet)
-library(ggplot2)
 library(dplyr)
+library(openxlsx)
+library(googlesheets4)
 
-# Set the working directory
-setwd("/Users/jiyoung/Desktop/M_thesis/Data/Final_Data")
+# Google Sheets 
+gs4_auth()
 
-# Read data
-data <- read.xlsx("master_2009_2021_withoutNa3.xlsx")
+sheet_url <- "https://docs.google.com/spreadsheets/d/1lh58bajIROF7b1ErqbvAvP-oWdC692ia8Eoul1Nvs_I"
 
-# Function to standardize a variable
-standardize <- function(x) {
-  return((x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE))
-}
+data <- read_sheet(sheet_url)
 
-# Standardize the positive independent variables
+#Data Preprocessing
+
+# Standardize independent variables
 data <- data %>%
   group_by(iso3) %>%
-  mutate(
-    HDI_std = standardize(HDI),
-    GDPpc_std = standardize(GDPpc),
-    Urbanization_std = standardize(Urbanization),
-    Vulnerability_std = standardize(Vulnerability),
-    EconomicInequality_std = standardize(EconomicInequality),
-    PublicServices_std = standardize(PublicServices),
-    HumanRights_std = standardize(HumanRights),
-    ExpectedSchooling_std =  standardize(ExpectedSchooling),  
-    LifeExpectancy_std = standardize(LifeExpectancy),
-    AgeDependency_std = standardize(AgeDependency),
-    HumanRights_std = standardize(HumanRights)
-  )
-
-# Negative variables 
-# Standardize the negative independent variables
-log_transform <- function(x) {
-  min_val <- min(x)
-  if (min_val < 0) {
-    # Add a constant value to make all values positive
-    x <- x - min_val + 0.000001
-  } else if (min_val == 0) {
-    # Add a small positive value to prevent -Inf when taking logarithm
-    x <- x + 0.000001
-  }
-  return(log(x))
-}
-
-# Log-transform variables with potential negative values
-data <- data %>%
-  mutate(
-    GDPgrowth_log = log_transform(GDPgrowth),
-    UrbanGrowth_log = log_transform(UrbanGrowth),
-    PoliticalStability_log = log_transform(PoliticalStability),
-    SPEI_log = log_transform(SPEI)
-  )
-
-# Function to standardize Conflict and Disasters variables (population's data)
-standardize_cd <- function(x, pop) {
-  return(log((x + 1) / (pop + 1)))
-}
+  mutate(across(c(HDI, Urbanization, GDPpc, SPEI, Vulnerability, PoliticalStability, HumanRights, AgeDependency), ~ scale(.)))
 
 # Standardize Conflict and Disasters variables
 data <- data %>%
   group_by(iso3) %>%
   mutate(
-    Conflict_std = standardize_cd(Conflict, pop),
-    Disasters_std = standardize_cd(Disasters, pop)
+    Conflict_std = log((Conflict + 1) / (pop + 1)),
+    Disasters_std = log((Disasters + 1) / (pop + 1))
   )
 
-# Log for dependent variables (Check: I need to add +1 to make positive value)
+# Apply lag1
+lagged_vars <- c("HDI", "Urbanization", "GDPpc", "SPEI", "Vulnerability", "HumanRights", "AgeDependency", "PoliticalStability", "Conflict_std", "Disasters_std", "GDPgrowth", "UrbanGrowth")
+for (var in lagged_vars) {
+  data[[paste0(var, "_lag1")]] <- ave(data[[var]], data$iso3, FUN = function(x) c(NA, x[-length(x)]))
+}
+
+
+# Define independent_vars
+independent_vars <- c("HDI_lag1", "Urbanization_lag1", "GDPpc_lag1", "SPEI_lag1", "Vulnerability_lag1", "PoliticalStability_lag1", "HumanRights_lag1", "AgeDependency_lag1", "Conflict_std_lag1", "Disasters_std_lag1", "GDPgrowth_lag1", "UrbanGrowth_lag1")
+
+
+# Convert independent variables to numeric
+for(var in independent_vars) {
+  data[[var]] <- as.numeric(as.character(data[[var]]))
+}
+
+# Log for dependent variables
 data <- data %>%
-  group_by(iso3) %>%
   mutate(
     ID_conflict_log = log(ID_conflict + 1),
     ID_disasters_log = log(ID_disasters + 1), 
@@ -84,163 +55,129 @@ data <- data %>%
     refugee_log = log(refugee + 1)
   )
 
-# Define lagged independent variables
-lagged_vars <- c(
+# Define dependent variable
+dependent_var <- "ID_conflict_log"
 
-  "GDPpc_std",
-  "Urbanization_std",
-  "Vulnerability_std",
-  "GDPgrowth_log",
-  "UrbanGrowth_log",
-  "PoliticalStability_log",
-  "SPEI_log",
-  "Conflict_std",
-  "Disasters_std",
-  "AgeDependency_std",
-  "HumanRights_std"
+
+# Select only the specified variables
+input.df <- data[, c("iso3", "year", independent_vars, dependent_var)]
+
+
+# Filter out NA rows 
+input.df <- na.omit(input.df)
+
+
+# Check the modified data
+summary(input.df)
+
+# Save selected data to Excel file
+write.xlsx(input.df, "input.df.xlsx")
+
+
+
+
+
+
+# Cross-validation
+
+
+results <- list()
+
+folds <- 4
+test.horizon <- 1
+alpha <- 0
+lambda <- c(0, 1, 0.01)
+
+# Iterate over each group (iso3) 
+unique_iso3 <- unique(input.df$iso3)
+
+for(iso3_code in unique_iso3) {
+  cat("Processing country:", iso3_code, "\n")
   
-)
-
-# Apply lag1 to independent variables
-for (var in lagged_vars) {
-  data[[paste0(var, "_lag1")]] <- lag(data[[var]], 1)
+  df_iso3 <- input.df %>% 
+    filter(iso3 == iso3_code) %>% 
+    arrange(year)
+  
+  factors_to_exclude <- sapply(df_iso3, function(x) if(is.factor(x)) length(unique(x)) == 1 else FALSE)
+  variables_to_keep <- names(df_iso3)[!factors_to_exclude]
+  
+  # Setup the trainControl for time-series cross-validation
+  initialWindow <- max(1, nrow(df_iso3) - folds - (test.horizon - 1))
+  myTimeControl <- trainControl(method = "timeslice",
+                                initialWindow = initialWindow,
+                                horizon = test.horizon,
+                                fixedWindow = TRUE,
+                                allowParallel = TRUE,
+                                savePredictions = "final")
+  
+  
+  # Train the Elastic Net 
+  model_formula <- as.formula(paste("ID_conflict_log ~", paste(variables_to_keep[!variables_to_keep %in% c("iso3", "year", "ID_conflict_log")], collapse = " + ")))
+  model <- train(model_formula, 
+                 data = df_iso3,
+                 method = "glmnet",
+                 trControl = myTimeControl,
+                 tuneGrid = expand.grid(alpha = alpha, lambda = lambda),
+                 metric = "RMSE")
+  
+  # Store the trained model and its details
+  results[[iso3_code]] <- list(model = model)
 }
+warnings()
 
-# Filter out NA rows resulting from applying lag
-data <- data[complete.cases(data), ]
-
-
-
-#dependent variables
-dependent_var1 <- "ID_conflict_log"
-dependent_var2 <- "ID_disasters_log"
-dependent_var3 <- "IDPs_conflict_log"
-dependent_var4 <- "IDPs_disasters_log"
-dependent_var5 <- "ID_log"
-dependent_var6 <- "IDPs_log"
-dependent_var7 <- "refugee_log"
+print(results)
 
 
-# Define years explicitly
-years <- 2009:2021  
 
-# Initialize window size and horizon
-initialWindow <- 8
-horizon <- 3
-num_slices <- length(years) - initialWindow - horizon + 1
 
-# Initialize empty lists for training and testing slices
-training_slices <- list()
-testing_slices <- list()
+# coefficients
+all_coefs <- data.frame()
 
-# Generate the slices
-for (i in 1:num_slices) {
-  training_slices[[i]] <- years[i:(i + initialWindow - 1)]
-  testing_slices[[i]] <- years[(i + initialWindow):(i + initialWindow + horizon - 1)]
-}
-
-# Prepare a dataframe for plotting
-plot.df <- lapply(seq_along(training_slices), function(i) {
-  train_df <- tibble(
-    year = training_slices[[i]],
-    spl.id = rep(i, length(training_slices[[i]])),
-    spl.set = "Training"
-  )
-  
-  test_df <- tibble(
-    year = testing_slices[[i]],
-    spl.id = rep(i, length(testing_slices[[i]])),
-    spl.set = "Validation"
-  )
-  
-  bind_rows(train_df, test_df)
-}) %>%
-  bind_rows() %>%
-  mutate(year = as.factor(year))
-
-# Plot the cross-validation scheme
-cross_val_plot <- ggplot(plot.df, aes(x = spl.id, y = year, fill = spl.set)) +
-  geom_tile(color = "white") +
-  scale_fill_viridis_d() +
-  theme_bw() +
-  theme(legend.title = element_blank()) +
-  coord_flip() +
-  xlab("Resample ID") + ylab("Year")
-
-# Save the plot
-ggsave("rollWindowScheme.jpeg", plot = cross_val_plot, width = 10, height = 6)
-
-# Initialize a dataframe to store model performance metrics
-model_performances <- data.frame(Slice = integer(), RMSE = numeric(), Rsquared = numeric(), MAE = numeric())
-
-# Loop through each slice for cross-validation
-for (i in 1:length(training_slices)) {
-  # Filter train and test sets for the current slice
-  train_data <- data %>%
-    filter(year %in% training_slices[[i]])
-  test_data <- data %>%
-    filter(year %in% testing_slices[[i]])
-  
-  # Check if Y_train has more than one unique value
-  if (length(unique(train_data[[dependent_var2]])) <= 1) {
-    cat("Slice", i, "skipped: Dependent variable is constant.\n")
-    next  # Skip to the next iteration of the loop
+# Loop through each country's results
+for(iso3_code in names(results)) {
+  # Check if the model exists and is of class glmnet
+  if (!is.null(results[[iso3_code]]$model) && "glmnet" %in% class(results[[iso3_code]]$model$finalModel)) {
+    # Extract the final model
+    model <- results[[iso3_code]]$model$finalModel
+    
+    # Get the coefficients at the best lambda (change s to a different value if needed)
+    best_lambda <- results[[iso3_code]]$model$bestTune$lambda
+    coefs <- coef(model, s = best_lambda)
+    
+    # Convert to a dataframe and add row names as a column
+    coefs_df <- as.data.frame(as.matrix(coefs)) %>%
+      tibble::rownames_to_column(var = "variable") %>%
+      dplyr::filter(variable != "(Intercept)") %>%
+      dplyr::mutate(iso3 = iso3_code) # Add the country code
+    
+    # Append this country's coefficients to the overall data frame
+    all_coefs <- rbind(all_coefs, coefs_df)
   }
-  
-  # Prepare data for Elastic Net
-  X_train <- as.matrix(train_data[, lagged_vars])
-  Y_train <- train_data[[dependent_var2]]
-  X_test <- as.matrix(test_data[, lagged_vars])
-  Y_test <- test_data[[dependent_var2]]
-  
-  # Train the model using Elastic Net
-  lambda_values <- seq(0, 1, 0.01)
-  cv_model <- cv.glmnet(X_train, Y_train, type.measure = "mse", alpha = 0.5, family = "gaussian", lambda = lambda_values)
-  
-  # Select Optimal Lambda
-  optimal_lambda <- cv_model$lambda.min
-  
-  # Predict on the testing set
-  predictions <- predict(cv_model, newx = X_test, s = optimal_lambda)
-  
-  # Evaluate the model performance
-  rmse <- sqrt(mean((predictions - Y_test)^2))
-  rsquared <- 1 - sum((Y_test - predictions)^2) / sum((Y_test - mean(Y_test))^2)
-  mae <- mean(abs(predictions - Y_test))
-  
-  # Store Performance for each slice
-  model_performances <- rbind(model_performances, data.frame(Slice = i, RMSE = rmse, Rsquared = rsquared, MAE = mae))
 }
 
-# Output the results
-print(model_performances)
+
+# Averaging the coefficients across all countries
+average_coefs <- all_coefs %>%
+  group_by(variable) %>%
+  summarise(average = mean(s1, na.rm = TRUE)) %>%
+  ungroup()
 
 
-# Extract the coefficients at the optimal value of lambda
-optimal_lambda <- cv_model$lambda.min
-optimal_coefs <- coef(cv_model, s = "lambda.min")
+# Print average coefficients
+print(average_coefs)
 
-# Convert the sparse matrix into a regular numeric vector, excluding the intercept
-coef_vector <- as.numeric(optimal_coefs[-1])
+library(ggplot2)
 
-# Get the names of the coefficients (variables)
-coef_names <- rownames(optimal_coefs)[-1]
-
-# Create a data frame from the vectors
-coef_df <- data.frame(Variable = coef_names, Coefficient = coef_vector)
-
-# Remove zero coefficients if you only want to plot non-zero coefficients
-coef_df <- coef_df[coef_df$Coefficient != 0, ]
-
-# Order the data frame by the absolute value of the coefficients for plotting
-coef_df <- coef_df[order(abs(coef_df$Coefficient), decreasing = TRUE), ]
-
-# Plot the variable importance using ggplot2
-ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
-  geom_bar(stat = "identity") +
-  coord_flip() +  # Flip coordinates to make the plot horizontal
+# Plotting the average coefficients
+ggplot(average_coefs, aes(x = reorder(variable, average), y = average)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() + # Flip the coordinates to make it horizontal
   theme_minimal() +
-  labs(title = " Important Drivers of Disasters-induced internal displacement", x = "Variables", y = "Coefficient Value")
+  labs( x = "Variable",
+        y = "Average Coefficient")
+
+
+
 
 
 
