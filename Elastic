@@ -158,7 +158,7 @@ myTimeControl.paral <- trainControl(
 )
 
 # parameter
-alpha <- seq(0, 1, by = 0.5) 
+alpha <- 0.5
 lambda <- 10^seq(-3, 3, length = 100) 
 
 # model training
