@@ -5,8 +5,10 @@ library(dplyr)
 library(openxlsx)
 library(googlesheets4)
 
-setwd("/Users/jiyoung/Desktop/M_thesis/Data/Final_Data")
-data <- read.xlsx("master_2009_2021_withoutNa4.xlsx")
+# Google Sheets 
+gs4_auth()
+sheet_url <- "https://docs.google.com/spreadsheets/d/1lh58bajIROF7b1ErqbvAvP-oWdC692ia8Eoul1Nvs_I"
+data <- read_sheet(sheet_url)
 
 #Data Preprocessing
 
