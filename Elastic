@@ -5,12 +5,8 @@ library(dplyr)
 library(openxlsx)
 library(googlesheets4)
 
-# Google Sheets 
-gs4_auth()
-
-sheet_url <- "https://docs.google.com/spreadsheets/d/1lh58bajIROF7b1ErqbvAvP-oWdC692ia8Eoul1Nvs_I"
-
-data <- read_sheet(sheet_url)
+setwd("/Users/jiyoung/Desktop/M_thesis/Data/Final_Data")
+data <- read.xlsx("master_2009_2021_withoutNa4.xlsx")
 
 #Data Preprocessing
 
@@ -75,58 +71,110 @@ write.xlsx(input.df, "input.df.xlsx")
 
 
 
+## Cross-validation
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(readxl)
+library(writexl)
+
+# Load Data
+data <- read_xlsx("input.df.xlsx")
 
 
+# Create a sequence of years from the data
+years <- unique(data$year)
 
-# Cross-validation
+# Define the training and testing periods
+training_ends <- c(2018, 2019, 2020)  
+testing_years <- c(2019, 2020, 2021)  
 
-
-results <- list()
-
-folds <- 4
-test.horizon <- 1
-alpha <- 0.5
-lambda <- c(0, 1, 0.01)
-
-# Iterate over each group (iso3) 
-unique_iso3 <- unique(input.df$iso3)
-
-for(iso3_code in unique_iso3) {
-  cat("Processing country:", iso3_code, "\n")
+# Function to create training and test sets for one country
+create_country_cv_sets <- function(country_data, training_ends, testing_years) {
+  train_dfs <- list()
+  test_dfs <- list()
   
-  df_iso3 <- input.df %>% 
-    filter(iso3 == iso3_code) %>% 
-    arrange(year)
+  for(i in seq_along(training_ends)) {
+    train_dfs[[i]] <- country_data %>% 
+      filter(year <= training_ends[i]) %>% 
+      mutate(ResampleID = i, Set = 'Training')
+    
+    test_dfs[[i]] <- country_data %>% 
+      filter(year == testing_years[i]) %>% 
+      mutate(ResampleID = i, Set = 'Test')
+  }
   
-  factors_to_exclude <- sapply(df_iso3, function(x) if(is.factor(x)) length(unique(x)) == 1 else FALSE)
-  variables_to_keep <- names(df_iso3)[!factors_to_exclude]
-  
-  # Setup the trainControl for time-series cross-validation
-  initialWindow <- max(1, nrow(df_iso3) - folds - (test.horizon - 1))
-  myTimeControl <- trainControl(method = "timeslice",
-                                initialWindow = initialWindow,
-                                horizon = test.horizon,
-                                fixedWindow = TRUE,
-                                allowParallel = TRUE,
-                                savePredictions = "final")
-  
-  
-  # Train the Elastic Net 
-  model_formula <- as.formula(paste("ID_conflict_log ~", paste(variables_to_keep[!variables_to_keep %in% c("iso3", "year", "ID_conflict_log")], collapse = " + ")))
-  model <- train(model_formula, 
-                 data = df_iso3,
-                 method = "glmnet",
-                 trControl = myTimeControl,
-                 tuneGrid = expand.grid(alpha = alpha, lambda = lambda),
-                 metric = "RMSE")
-  
-  # Store the trained model and its details
-  results[[iso3_code]] <- list(model = model)
+  # Combine the training and test data frames for each resample period into one data frame
+  bind_rows(train_dfs, test_dfs)
 }
-warnings()
 
-print(results)
+# Apply the function to each country and combine the results
+all_cv_sets <- data %>%
+  group_by(iso3) %>%
+  group_map(~ create_country_cv_sets(.x, training_ends, testing_years), .keep = TRUE) %>%
+  bind_rows()
 
+# Select a sample country for visualization
+sample_country <- 'SWE'  # Replace with your specific iso3 code
+
+# Filter the data for the sample country
+plot_data <- all_cv_sets %>%
+  filter(iso3 == sample_country) %>%
+  arrange(ResampleID, year)
+
+# Plot the data split for the sample country
+ggplot(plot_data, aes(x = factor(year), y = factor(ResampleID), fill = Set)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("Training" = "yellow", "Test" = "blue")) +
+  theme_minimal() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(fill = "", x = "Year", y = "Resample ID", title = paste("Cross-Validation Data Split for", sample_country))
+
+# Save the plot to a file
+ggsave("cross_validation_plot_sample_country.png", width = 8, height = 4)
+
+
+
+
+
+
+
+
+
+## Elastic Net Model
+library(caret)
+library(glmnet)
+
+
+myTimeControl.paral <- trainControl(
+  method = "timeslice", # 시간 교차 검증을 위한 메소드 지정
+  initialWindow = length(unique(input.df$year)) - 3, 
+  horizon = 1, # 예측할 기간 설정
+  fixedWindow = TRUE, # 윈도우 크기 고정 여부
+  index = createMultiFolds(input.df$year, k = 5) 
+)
+
+# parameter
+alpha <- seq(0, 1, by = 0.1) 
+lambda <- 10^seq(-3, 3, length = 100) 
+
+# model training
+set.seed(123) 
+elastic_model <- train(
+  formula = ID_conflict_log ~ . -iso3 -year, 
+  data = input.df,
+  method = "glmnet",
+  family = "gaussian",
+  trControl = myTimeControl.paral,
+  tuneGrid = expand.grid(alpha = alpha, lambda = lambda),
+  metric = "RMSE"
+)
+
+
+print(elastic_model)
+print(elastic_model$bestTune)
+print(min(elastic_model$results$RMSE))
 
 
 
