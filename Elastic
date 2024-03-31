@@ -159,7 +159,7 @@ myTimeControl.paral <- trainControl(
 
 # parameter
 alpha <- 0.5
-lambda <- 10^seq(-3, 3, length = 100) 
+lambda <- seq(0, 1, 0.01)
 
 # model training
 set.seed(123) 
