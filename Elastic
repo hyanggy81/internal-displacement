@@ -1,174 +1,81 @@
 
+library(dplyr)
+library(readxl)
+library(writexl)
+
+# Read data
+data <- read_xlsx("master_2009_2021_withoutNa4.xlsx")
+
+# Definitions of variable types
+special_vars <- c("Conflict")
+regular_vars <- c( "PoliticalStability", "HDI", "GDPpc", "Urbanization", "Vulnerability", "SPEI", "AgeDependency")
+growth_vars <- c("GDPgrowth", "UrbanGrowth")  
+dependent_var <- c("ID")
+
+# Transformations on special variables
+data <- data %>%
+  mutate(across(all_of(special_vars), ~ scale(log(. + 1))))  # log transform +1 then z-score
+
+# Transformations on regular variables
+data <- data %>%
+  mutate(across(all_of(regular_vars), scale))  # direct z-score
+
+# Transformations on dependent variables
+data <- data %>%
+  mutate(across(all_of(dependent_var), ~ scale(log(. + 1))))  # log transform +1 then z-score
+
+# Combine all variables for lagging
+all_vars <- c(special_vars, regular_vars, growth_vars)
+
+# Create lagged names
+lagged_vars <- paste0(all_vars, "_lag1")
+
+
+data <- data %>%
+  group_by(iso3) %>%
+  mutate(across(all_of(all_vars), ~ c(NA, .[-length(.)]), .names = "{col}_lag1"))
+
+
+input.df <- data %>%
+  select(iso3, year, all_of(lagged_vars), all_of(dependent_var)) %>%
+  filter(!is.na(year) & year > 2009)  
+
+
+write_xlsx(input.df, "input.df.xlsx")
+
+
+
+
+
+###### Cross-Validation
 library(caret)
 library(glmnet)
 library(dplyr)
 library(openxlsx)
-library(googlesheets4)
-
-# Google Sheets 
-gs4_auth()
-sheet_url <- "https://docs.google.com/spreadsheets/d/1lh58bajIROF7b1ErqbvAvP-oWdC692ia8Eoul1Nvs_I"
-data <- read_sheet(sheet_url)
-
-#Data Preprocessing
-
-# Standardize independent variables
-data <- data %>%
-  group_by(iso3) %>%
-  mutate(across(c(HDI, Urbanization, GDPpc, SPEI, Vulnerability, PoliticalStability, HumanRights, AgeDependency), ~ scale(.)))
-
-# Standardize Conflict and Disasters variables
-data <- data %>%
-  group_by(iso3) %>%
-  mutate(
-    Conflict_std = log((Conflict + 1) / (pop + 1)),
-    Disasters_std = log((Disasters + 1) / (pop + 1))
-  )
-
-# Apply lag1
-lagged_vars <- c("HDI", "Urbanization", "GDPpc", "SPEI", "Vulnerability", "HumanRights", "AgeDependency", "PoliticalStability", "Conflict_std", "Disasters_std", "GDPgrowth", "UrbanGrowth")
-for (var in lagged_vars) {
-  data[[paste0(var, "_lag1")]] <- ave(data[[var]], data$iso3, FUN = function(x) c(NA, x[-length(x)]))
-}
 
 
-# Define independent_vars
-independent_vars <- c("HDI_lag1", "Urbanization_lag1", "GDPpc_lag1", "SPEI_lag1", "Vulnerability_lag1", "PoliticalStability_lag1", "HumanRights_lag1", "AgeDependency_lag1", "Conflict_std_lag1", "Disasters_std_lag1", "GDPgrowth_lag1", "UrbanGrowth_lag1")
+input.df<-
+  input.df %>% group_by(iso3) %>% 
+    dplyr::mutate(L1.ID=dplyr::lag(ID,1,default=first(ID),order_by=year))
 
-
-# Convert independent variables to numeric
-for(var in independent_vars) {
-  data[[var]] <- as.numeric(as.character(data[[var]]))
-}
-
-# Log for dependent variables
-data <- data %>%
-  mutate(
-    ID_conflict_log = log(ID_conflict + 1),
-    ID_disasters_log = log(ID_disasters + 1), 
-    IDPs_conflict_log = log(IDPs_conflict + 1),
-    IDPs_disasters_log = log(IDPs_disasters + 1),
-    ID_log = log(ID + 1),
-    IDPs_log = log(IDPs + 1),
-    refugee_log = log(refugee + 1)
-  )
-
-# Define dependent variable
-dependent_var <- "ID_conflict_log"
-
-
-# Select only the specified variables
-input.df <- data[, c("iso3", "year", independent_vars, dependent_var)]
-
-
-# Filter out NA rows 
-input.df <- na.omit(input.df)
-
-
-# Check the modified data
-summary(input.df)
-
-# Save selected data to Excel file
-write.xlsx(input.df, "input.df.xlsx")
-
-
-
-## Cross-validation
-
-library(dplyr)
-library(ggplot2)
-library(tidyr)
-library(readxl)
-library(writexl)
-
-# Load Data
-data <- read_xlsx("input.df.xlsx")
-
-
-# Create a sequence of years from the data
-years <- unique(data$year)
-
-# Define the training and testing periods
-training_ends <- c(2018, 2019, 2020)  
-testing_years <- c(2019, 2020, 2021)  
-
-# Function to create training and test sets for one country
-create_country_cv_sets <- function(country_data, training_ends, testing_years) {
-  train_dfs <- list()
-  test_dfs <- list()
-  
-  for(i in seq_along(training_ends)) {
-    train_dfs[[i]] <- country_data %>% 
-      filter(year <= training_ends[i]) %>% 
-      mutate(ResampleID = i, Set = 'Training')
-    
-    test_dfs[[i]] <- country_data %>% 
-      filter(year == testing_years[i]) %>% 
-      mutate(ResampleID = i, Set = 'Test')
-  }
-  
-  # Combine the training and test data frames for each resample period into one data frame
-  bind_rows(train_dfs, test_dfs)
-}
-
-# Apply the function to each country and combine the results
-all_cv_sets <- data %>%
-  group_by(iso3) %>%
-  group_map(~ create_country_cv_sets(.x, training_ends, testing_years), .keep = TRUE) %>%
-  bind_rows()
-
-# Select a sample country for visualization
-sample_country <- 'SWE'  # Replace with your specific iso3 code
-
-# Filter the data for the sample country
-plot_data <- all_cv_sets %>%
-  filter(iso3 == sample_country) %>%
-  arrange(ResampleID, year)
-
-# Plot the data split for the sample country
-ggplot(plot_data, aes(x = factor(year), y = factor(ResampleID), fill = Set)) +
-  geom_tile(color = "white") +
-  scale_fill_manual(values = c("Training" = "yellow", "Test" = "blue")) +
-  theme_minimal() +
-  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90, hjust = 1)) +
-  labs(fill = "", x = "Year", y = "Resample ID", title = paste("Cross-Validation Data Split for", sample_country))
-
-# Save the plot to a file
-ggsave("cross_validation_plot_sample_country.png", width = 8, height = 4)
-
-
-
-
-
-
-
-
-
-## Elastic Net Model
-library(caret)
-library(glmnet)
-
-
-myTimeControl.paral <- trainControl(
-  method = "timeslice", # 시간 교차 검증을 위한 메소드 지정
-  initialWindow = length(unique(input.df$year)) - 3, 
-  horizon = 1, # 예측할 기간 설정
-  fixedWindow = TRUE, # 윈도우 크기 고정 여부
-  index = createMultiFolds(input.df$year, k = 5) 
+myTimeControl <- trainControl(
+  method = "repeatedcv",
+ number=10, p=.8, classProbs = F, allowParallel = T, savePredictions = F
 )
 
-# parameter
-alpha <- 0.5
-lambda <- seq(0, 1, 0.01)
+# Elastic Net model parameter grid
+alpha <- 0.5  
+lambda <- seq(0, 1, 0.01)  
 
-# model training
-set.seed(123) 
+# formula
+formula <- as.formula(paste(dependent_var, "~ .", "-year"))
+
+# Train
 elastic_model <- train(
-  formula = ID_conflict_log ~ . -iso3 -year, 
+  formula,
   data = input.df,
   method = "glmnet",
-  family = "gaussian",
-  trControl = myTimeControl.paral,
+  trControl = myTimeControl,
   tuneGrid = expand.grid(alpha = alpha, lambda = lambda),
   metric = "RMSE"
 )
@@ -179,59 +86,210 @@ print(elastic_model$bestTune)
 print(min(elastic_model$results$RMSE))
 
 
+# Calculate R^2
+rsq <- postResample(pred = predict(elastic_model, input.df), obs = input.df$ID)
+rsq_stat <- rsq['Rsquared']
 
-# coefficients
-all_coefs <- data.frame()
+print(paste0("R-squared: ", rsq_stat))
 
-# Loop through each country's results
-for(iso3_code in names(results)) {
-  # Check if the model exists and is of class glmnet
-  if (!is.null(results[[iso3_code]]$model) && "glmnet" %in% class(results[[iso3_code]]$model$finalModel)) {
-    # Extract the final model
-    model <- results[[iso3_code]]$model$finalModel
-    
-    # Get the coefficients at the best lambda (change s to a different value if needed)
-    best_lambda <- results[[iso3_code]]$model$bestTune$lambda
-    coefs <- coef(model, s = best_lambda)
-    
-    # Convert to a dataframe and add row names as a column
-    coefs_df <- as.data.frame(as.matrix(coefs)) %>%
-      tibble::rownames_to_column(var = "variable") %>%
-      dplyr::filter(variable != "(Intercept)") %>%
-      dplyr::mutate(iso3 = iso3_code) # Add the country code
-    
-    # Append this country's coefficients to the overall data frame
-    all_coefs <- rbind(all_coefs, coefs_df)
-  }
-}
+elastic_model$bestTune
+elastic_model$results[lambda==elastic_model$bestTune$lambda,]
 
 
-# Averaging the coefficients across all countries
-average_coefs <- all_coefs %>%
-  group_by(variable) %>%
-  summarise(average = mean(s1, na.rm = TRUE)) %>%
-  ungroup()
+# coefficients from the model at best lambda
+coef_elastic <- coef(elastic_model$finalModel, s = elastic_model$bestTune$lambda)
+
+# Convert to matrix and then to data.frame
+coef_matrix <- as.matrix(coef_elastic)
+coef_df <- data.frame(Coefficient = coef_matrix[, 1], Variable = rownames(coef_matrix))
+
+# Remove the intercept and any zero coefficients
+coef_df <- coef_df[coef_df$Coefficient != 0 & rownames(coef_matrix) != "(Intercept)", ]
+
+# Display the coefficients
+print(coef_df)
 
 
-# Print average coefficients
-print(average_coefs)
 
+
+##Visualization
 library(ggplot2)
 
-# Plotting the average coefficients
-ggplot(average_coefs, aes(x = reorder(variable, average), y = average)) +
+# coefficients from the model at best lambda
+coef_elastic <- coef(elastic_model$finalModel, s = elastic_model$bestTune$lambda)
+coef_matrix <- as.matrix(coef_elastic)
+coef_df <- data.frame(Coefficient = coef_matrix[, 1])
+coef_df$Variable <- rownames(coef_matrix)
+
+
+coef_df <- coef_df[coef_df$Coefficient != 0 & coef_df$Variable != "(Intercept)" & coef_df$Variable != "L1.ID", ]
+
+
+coef_df <- coef_df[!startsWith(coef_df$Variable, "iso3"), ]
+coef_df$Variable <- gsub("_lag1", "", coef_df$Variable)
+
+
+coef_df$Variable <- gsub("GDPpc", "GDP per Capita", coef_df$Variable)
+coef_df$Variable <- gsub("Vulnerability", "Climate Vulnerability", coef_df$Variable)
+
+# Visualization
+ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   geom_bar(stat = "identity", fill = "steelblue") +
-  coord_flip() + # Flip the coordinates to make it horizontal
+  coord_flip() + # Flip coordinates for horizontal layout
   theme_minimal() +
-  labs( x = "Variable",
-        y = "Average Coefficient")
+  labs(x = "Variables",
+       y = "Coefficient")
+
+
+
+
+
+## refugee
+
+##adding growthrate 
+library(dplyr)
+library(readxl)
+library(writexl)
+
+# Read data
+data <- read_xlsx("master_2009_2021_withoutNa4.xlsx")
+
+# Definitions of variable types
+special_vars <- c("Conflict")
+regular_vars <- c("HDI", "GDPpc", "Urbanization", "Vulnerability", "SPEI", "AgeDependency", "PoliticalStability")
+growth_vars <- c("GDPgrowth", "UrbanGrowth")  
+dependent_var <- c("refugee")
+
+data <- data %>%
+  mutate(across(all_of(special_vars), ~ scale(log(. + 1))))  # log transform +1 then z-score
+
+
+data <- data %>%
+  mutate(across(all_of(regular_vars), scale))  # direct z-score
+
+
+data <- data %>%
+  mutate(across(all_of(dependent_var), ~ scale(log(. + 1))))  # log transform +1 then z-score
+
+
+all_vars <- c(special_vars, regular_vars, growth_vars)
+
+
+lagged_vars <- paste0(all_vars, "_lag1")
+
+data <- data %>%
+  group_by(iso3) %>%
+  mutate(across(all_of(all_vars), ~ c(NA, .[-length(.)]), .names = "{col}_lag1"))
+
+
+input.df <- data %>%
+  select(iso3, year, all_of(lagged_vars), all_of(dependent_var)) %>%
+  filter(!is.na(year) & year > 2009)  
+
+
+write_xlsx(input.df, "input.df.xlsx")
+
+
+
+
+
+###### Cross-Validation
+library(caret)
+library(glmnet)
+library(dplyr)
+library(openxlsx)
+
+
+input.df<-
+  input.df %>% group_by(iso3) %>% 
+  dplyr::mutate(L1.refugee=dplyr::lag(refugee,1,default=first(refugee),order_by=year))
+
+myTimeControl <- trainControl(
+  method = "repeatedcv",
+  number=10, p=.8, classProbs = F, allowParallel = T, savePredictions = F
+)
+
+# Elastic Net model parameter grid
+alpha <- 0.5  
+lambda <- seq(0, 1, 0.01)  
+
+# formula
+formula <- as.formula(paste(dependent_var, "~ .", "-year"))
+
+# Train
+elastic_model <- train(
+  formula,
+  data = input.df,
+  method = "glmnet",
+  trControl = myTimeControl,
+  tuneGrid = expand.grid(alpha = alpha, lambda = lambda),
+  metric = "RMSE"
+)
+
+
+print(elastic_model)
+print(elastic_model$bestTune)
+print(min(elastic_model$results$RMSE))
+
+
+# Calculate R^2
+rsq <- postResample(pred = predict(elastic_model, input.df), obs = input.df$refugee)
+rsq_stat <- rsq['Rsquared']
+
+print(paste0("R-squared: ", rsq_stat))
+
+elastic_model$bestTune
+elastic_model$results[lambda==elastic_model$bestTune$lambda,]
+
+
+# coefficients from the model at best lambda
+coef_elastic <- coef(elastic_model$finalModel, s = elastic_model$bestTune$lambda)
+
+# Convert to matrix and then to data.frame
+coef_matrix <- as.matrix(coef_elastic)
+coef_df <- data.frame(Coefficient = coef_matrix[, 1], Variable = rownames(coef_matrix))
+
+# Remove the intercept and any zero coefficients
+coef_df <- coef_df[coef_df$Coefficient != 0 & rownames(coef_matrix) != "(Intercept)", ]
+
+# Display the coefficients
+print(coef_df)
 
 
 
 
 
 
+# forced migrant visualization
 
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales) # For date formatting
 
+# Load the data from the Excel file
+data <- read_excel("master_2009_2021_withoutNa4.xlsx")
+
+# Prepare the data for plotting by reshaping and converting the counts to millions
+data_long <- data %>%
+  select(year, ID_conflict, ID_disasters) %>%
+  mutate(across(c(ID_conflict, ID_disasters), ~ .x / 1e6)) %>%
+  pivot_longer(cols = c(ID_conflict, ID_disasters), names_to = "Category", values_to = "Count")
+
+# Visualize the yearly trends of displacement in a stacked bar chart with soft colors
+ggplot(data_long, aes(x = factor(year), y = Count, fill = Category)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_brewer(palette = "Pastel1") +  # Use a soft color palette
+  labs(x = "Year",
+       y = "Count (in millions)",
+       fill = "Category",
+  ) +
+  theme_minimal() +
+  scale_x_discrete(breaks = function(x) seq(min(x), max(x), by = 2)) + # 2-year intervals
+  theme(plot.title = element_text(hjust = 0.5)) # Center the plot title
+
+# Execute the plot
+print(plot)
 
 
