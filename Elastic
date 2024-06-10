@@ -242,20 +242,16 @@ elastic_model$bestTune
 elastic_model$results[lambda==elastic_model$bestTune$lambda,]
 
 
-# coefficients from the model at best lambda
+
 coef_elastic <- coef(elastic_model$finalModel, s = elastic_model$bestTune$lambda)
 
-# Convert to matrix and then to data.frame
 coef_matrix <- as.matrix(coef_elastic)
 coef_df <- data.frame(Coefficient = coef_matrix[, 1], Variable = rownames(coef_matrix))
 
-# Remove the intercept and any zero coefficients
 coef_df <- coef_df[coef_df$Coefficient != 0 & rownames(coef_matrix) != "(Intercept)", ]
 
-# Display the coefficients
+
 print(coef_df)
-
-
 
 
 
@@ -292,4 +288,74 @@ ggplot(data_long, aes(x = factor(year), y = Count, fill = Category)) +
 # Execute the plot
 print(plot)
 
+
+
+## heatmap for SPEI
+    
+    library(readxl)
+    library(ggplot2)
+    library(dplyr)
+    
+  
+    data <- read_excel("master_2009_2021_withoutNa4.xlsx")
+    
+    average_spei_data <- data %>%
+      group_by(iso3, year) %>%
+      summarise(average_SPEI = mean(SPEI, na.rm = TRUE)) %>%
+      ungroup()
+
+    heatmap <- ggplot(average_spei_data, aes(x = year, y = iso3, fill = average_SPEI)) +
+      geom_tile() + # This adds the colored tiles
+      scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0, 
+                           name = "Average SPEI", 
+                           na.value = "grey50") + # Colors for low, mid, high values of SPEI
+      scale_x_continuous(breaks = seq(2009, 2021, by = 2)) + # Year intervals of 2
+      theme_minimal() + # Minimal theme for a clean look
+      labs(x = "Year", 
+           y = "iso3") +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) # To rotate x-axis labels for better readability
+    
+    print(heatmap)
+    ggsave("heatmap_small.pdf", plot = heatmap, width = 8, height = plot_height/35, units = "in") 
+    
+    
+    
+
+## Conflict visualization by heatmap
+    
+    library(readxl)
+    library(ggplot2)
+    library(dplyr)
+    
+
+    data <- read_excel("master_2009_2021_withoutNa4.xlsx")
+    
+
+    average_conflict_data <- data %>%
+      group_by(iso3, year) %>%
+      summarise(average_Conflict_per_capita = mean(Conflict / pop, na.rm = TRUE)) %>%
+      ungroup()
+    
+
+    conflict_heatmap <- ggplot(average_conflict_data, aes(x = year, y = iso3, fill = average_Conflict_per_capita)) +
+      geom_tile() + # This adds the colored tiles
+      scale_fill_gradient2(low = "white", mid = "orange", high = "red", midpoint = 0.002, 
+                           name = "Average Conflict\nper Capita", # Updated legend title
+                           na.value = "grey50") + # Colors for low, mid, high values of Conflict per capita
+      scale_x_continuous(breaks = seq(2009, 2021, by = 2)) + # Year intervals of 2
+      theme_minimal() + # Minimal theme for a clean look
+      labs(x = "Year", y = "ISO3 Code") +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5), # To rotate x-axis labels for better readability
+            axis.text.y = element_text(size = 4)) # Keeps y-axis text size as specified
+    
+
+    print(conflict_heatmap)
+ 
+    page_height = 9 
+    
+
+    ggsave("heatmap_conflict_per_capita.pdf", plot = conflict_heatmap, width = 8, height = page_height, units = "in")
+    
+    
+    
 
