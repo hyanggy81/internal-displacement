@@ -255,6 +255,37 @@ print(coef_df)
 
 
 
+##Visualization
+library(ggplot2)
+
+
+coef_elastic <- coef(elastic_model$finalModel, s = elastic_model$bestTune$lambda)
+coef_matrix <- as.matrix(coef_elastic)
+coef_df <- data.frame(Coefficient = coef_matrix[, 1])
+coef_df$Variable <- rownames(coef_matrix)
+
+
+coef_df <- coef_df[coef_df$Coefficient != 0 & coef_df$Variable != "(Intercept)" & coef_df$Variable != "L1.refugee", ]
+
+
+coef_df <- coef_df[!startsWith(coef_df$Variable, "iso3"), ]
+coef_df$Variable <- gsub("_lag1", "", coef_df$Variable)
+
+
+coef_df$Variable <- gsub("GDPpc", "GDP per Capita", coef_df$Variable)
+coef_df$Variable <- gsub("Vulnerability", "Climate Vulnerability", coef_df$Variable)
+
+
+ggplot(coef_df, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() + # Flip coordinates for horizontal layout
+  theme_minimal() +
+  labs(x = "Variables",
+       y = "Coefficient")
+
+
+
+
 
 # forced migrant visualization
 
